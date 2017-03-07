@@ -4,8 +4,40 @@
 #include "taping_p.h"
 #include <adolc/convolut.h>
 #include "dvlparms.h"
+#include <adolc/hess_rev.h>
+#include <iostream>
+#include <limits>
 
 #include <math.h>
+
+static const locint NULL_LOC = std::numeric_limits<locint>::max();
+
+class DerivativeInfo {
+ public:
+  DerivativeInfo() {
+    clear();
+  }
+
+  void clear() {
+    r = NULL_LOC; x = NULL_LOC; y = NULL_LOC;
+    vx = 0.0; vy = 0.0;
+    dx = 0.0; dy = 0.0;
+    pxx = 0.0; pxy = 0.0; pyy = 0.0;
+  }
+  void debug() const {
+    std::cout << "opcode = " << (int)opcode << " r = " << r
+              << " x = " << x << " y = " << y << std::endl;
+    std::cout << "dx = " << dx << " dy = " << dy 
+              << " pxx = " << pxx << " pxy = " << pxy
+              << " pyy = " << pyy << std::endl;
+  }
+  unsigned char opcode;
+  locint r, x, y;
+  mutable double coval; // only used by pow_d_a and pow_a_d
+  double vx, vy;
+  double dx, dy;
+  double pxx, pxy, pyy;
+};
 
 // A forward mode reevaluation for the intermediate values
 void reevaluate(short tnum,
@@ -129,6 +161,8 @@ void reevaluate(short tnum,
                 /* (*=) */
                 arg  = get_locint_f();
                 res  = get_locint_f();
+                values.push_back(dp_T0[res]);
+                values.push_back(dp_T0[arg]);
                 dp_T0[res]*= dp_T0[arg];
                 break;
             case incr_a:                  /* Increment an adouble    incr_a */
@@ -171,6 +205,8 @@ void reevaluate(short tnum,
                 arg1  = get_locint_f();
                 arg2  = get_locint_f();
                 res   = get_locint_f();
+                values.push_back(dp_T0[arg1]);
+                values.push_back(dp_T0[arg2]);
                 dp_T0[res]=dp_T0[arg1]*dp_T0[arg2];
                 break;
             case mult_d_a:   /* Multiply an adouble by a double    mult_d_a */
@@ -185,12 +221,15 @@ void reevaluate(short tnum,
                 arg1  = get_locint_f();
                 arg2  = get_locint_f();
                 res   = get_locint_f();
+                values.push_back(dp_T0[arg1]);
+                values.push_back(dp_T0[arg2]);
                 dp_T0[res]=dp_T0[arg1]/dp_T0[arg2];
                 break;
             case div_d_a:       /* Division double - adouble (/)    div_d_a */
                 arg   = get_locint_f();
                 res   = get_locint_f();
                 coval = get_val_f();
+                values.push_back(dp_T0[arg]);
                 dp_T0[res]  = coval / dp_T0[arg];
                 break;
 
@@ -208,28 +247,33 @@ void reevaluate(short tnum,
             case exp_op:                    /* exponent operation    exp_op */
                 arg  = get_locint_f();
                 res  = get_locint_f();
+                values.push_back(dp_T0[arg]);
                 dp_T0[res]= exp(dp_T0[arg]);
                 break;
             case log_op:                                         /* log_op */
                 arg  = get_locint_f();
                 res  = get_locint_f();
+                values.push_back(dp_T0[arg]);
                 dp_T0[res]= log(dp_T0[arg]);
                 break;
             case pow_op:                                         /* pow_op */
                 arg  = get_locint_f();
                 res  = get_locint_f();
                 coval   = get_val_f();
+                values.push_back(dp_T0[arg]);
                 dp_T0[res] = pow(dp_T0[arg],coval);
                 break;
             case sqrt_op:                                       /* sqrt_op */
                 arg  = get_locint_f();
                 res  = get_locint_f();
+                values.push_back(dp_T0[arg]);
                 dp_T0[res]= sqrt(dp_T0[arg]);
                 break;
             case sin_op:                       /* sine operation    sin_op */
                 arg1  = get_locint_f();
                 arg2  = get_locint_f();
                 res   = get_locint_f();
+                values.push_back(dp_T0[arg1]);
                 dp_T0[arg2]= cos(dp_T0[arg1]);
                 dp_T0[res] = sin(dp_T0[arg1]);
                 break;
@@ -237,6 +281,7 @@ void reevaluate(short tnum,
                 arg1  = get_locint_f();
                 arg2  = get_locint_f();
                 res   = get_locint_f();
+                values.push_back(dp_T0[arg1]);
                 dp_T0[arg2]= sin(dp_T0[arg1]);
                 dp_T0[res] = cos(dp_T0[arg1]);
                 break;
@@ -244,18 +289,21 @@ void reevaluate(short tnum,
                 arg1  = get_locint_f();
                 arg2  = get_locint_f();
                 res   = get_locint_f();
+                values.push_back(dp_T0[arg1]);
                 dp_T0[res] = atan(dp_T0[arg1]);
                 break;
             case asin_op:                                       /* asin_op */
                 arg1  = get_locint_f();
                 arg2  = get_locint_f();
                 res   = get_locint_f();
+                values.push_back(dp_T0[arg1]);
                 dp_T0[res] = asin(dp_T0[arg1]);
                 break;
             case acos_op:                                       /* acos_op */
                 arg1  = get_locint_f();
                 arg2  = get_locint_f();
                 res   = get_locint_f();
+                values.push_back(dp_T0[arg1]);
                 dp_T0[res] = acos(dp_T0[arg1]);
                 break;
 
@@ -264,24 +312,28 @@ void reevaluate(short tnum,
                 arg1  = get_locint_f();
                 arg2  = get_locint_f();
                 res   = get_locint_f();
+                values.push_back(dp_T0[arg1]);
                 dp_T0[res] = asinh(dp_T0[arg1]);
                 break;
             case acosh_op:                                     /* acosh_op */
                 arg1  = get_locint_f();
                 arg2  = get_locint_f();
                 res   = get_locint_f();
+                values.push_back(dp_T0[arg1]);
                 dp_T0[res] = acosh(dp_T0[arg1]);
                 break;
             case atanh_op:                                     /* atanh_op */
                 arg1  = get_locint_f();
                 arg2  = get_locint_f();
                 res   = get_locint_f();
+                values.push_back(dp_T0[arg1]);
                 dp_T0[res] = atanh(dp_T0[arg1]);
                 break;
             case erf_op:                                         /* erf_op */
                 arg1 = get_locint_f();
                 arg2 = get_locint_f();
                 res  = get_locint_f();
+                values.push_back(dp_T0[arg1]);
                 dp_T0[res] = erf(dp_T0[arg1]);
                 break;
 #endif
@@ -291,15 +343,19 @@ void reevaluate(short tnum,
                 arg2  = get_locint_f();
                 res   = get_locint_f();
                 coval = get_val_f();
-                if (dp_T0[arg1] > dp_T0[arg2])
+                if (dp_T0[arg1] > dp_T0[arg2]) {
+                    values.push_back(1.0);
                     dp_T0[res] = dp_T0[arg2];
-                else
+                } else {
+                    values.push_back(-1.0);
                     dp_T0[res] = dp_T0[arg1];
+                }
                 break;
             case abs_val:                                       /* abs_val */
                 arg   = get_locint_f();
                 res   = get_locint_f();
                 coval = get_val_f();
+                values.push_back(dp_T0[arg]);
                 dp_T0[res]  = fabs(dp_T0[arg]);
                 break;
             case ceil_op:          /* Compute ceil of adouble      ceil_op */
@@ -363,7 +419,7 @@ int second_order_rev(short tnum,  // tape id
                      double * basepoint,
                      double** Hess)  // The dense Hessian
 {
-    printf("Calling DenseHess\n");
+    printf("Calling Second order rev, NULL_LOC = %u\n", NULL_LOC);
     exit(-1);
     
     init_rev_sweep(tnum);
@@ -394,6 +450,9 @@ int second_order_rev(short tnum,  // tape id
     locint arg1 = 0;
     locint arg2 = 0;
     double coval = 0;
+    double vx, vy;
+
+    DerivativeInfo dinfo;
 
     init_rev_sweep(tnum);
     opcode = get_op_r();    
@@ -461,14 +520,17 @@ int second_order_rev(short tnum,  // tape id
             case assign_d_zero: /* assign an adouble a        assign_d_zero */
             case assign_d_one:  /* double value. (=)           assign_d_one */
                 res   = get_locint_r();
+                info.r = res;
                 break;
             case assign_ind: /* assign an adouble variable an    assign_ind */
                 /* independent double value (<<=) */
                 res = get_locint_r();
+                // (TODO) : do something about res;
                 break;
             case assign_dep:     /* assign a float variable a    assign_dep */
                 /* dependent adouble value. (>>=) */
                 res = get_locint_r();
+                adjoint[res] = 1.0;
             break;
 
                 /************************************************************/
@@ -483,6 +545,10 @@ int second_order_rev(short tnum,  // tape id
                 /* adouble. (+=) */
                 res = get_locint_r();
                 arg = get_locint_r();
+                info.r = res;
+                info.x = res;
+                info.y = arg;
+                info.dx = 1.0; info.dy = 1.0;
                 break;
             case eq_min_d: /* Subtract a floating point from an    eq_min_d */
                 /* adouble. (-=) */
@@ -494,12 +560,18 @@ int second_order_rev(short tnum,  // tape id
                 /* adouble. (-=) */
                 res = get_locint_r();
                 arg = get_locint_r();
+                info.r = res;
+                info.x = res;
+                info.y = arg;
+                info.dx = 1.0; info.dy = -1.0;
                 break;
-
             case eq_mult_d:        /* Multiply an adouble by a    eq_mult_d */
                 /* flaoting point. (*=) */
                 res   = get_locint_r();
                 coval = get_val_r();
+                info.r = res;
+                info.x = res;
+                info.dx = coval;
                 break;
             //case eq_mult_p:      /* Multiply an adouble by a    eq_mult_p */
                 /* flaoting point. (*=) */
@@ -511,19 +583,338 @@ int second_order_rev(short tnum,  // tape id
                 /* (*=) */
                 res = get_locint_r();
                 arg = get_locint_r();
+                info.r = res;
+                info.x = res;
+                info.y = arg;
+                vy = values.pop_back();
+                vx = values.pop_back();
+                info.dx = vy; info.dy = vx;
+                info.pxy = 1.0;
                 break;
-        
             case incr_a:                  /* Increment an adouble    incr_a */
-            case decr_a:                 /* Increment an adouble    decr_a */
+            case decr_a:                  /* Increment an adouble    decr_a */
                 res   = get_locint_r();
                 break;
+            case plus_a_a:           /* : Add two adoubles. (+)    plus a_a */
+                res  = get_locint_r();
+                arg2 = get_locint_r();
+                arg1 = get_locint_r();
+                info.r = res;
+                info.x = arg1;
+                info.y = arg2;
+                info.dx = 1.0; info.dy = 1.0;
+                break;
+            //case plus_a_p:     /* Add an adouble and a double    plus_a_p */
+            //case min_a_p:        /* Subtract an adouble from a    min_a_p */
+                break;
+            case plus_d_a:       /* Add an adouble and a double    plus_d_a */
+                /* (+) */
+                res   = get_locint_r();
+                arg   = get_locint_r();
+                coval = get_val_r();
+                info.r = res;
+                info.x = arg1;
+                info.dx = 1.0;
+                break;
+            case min_a_a:         /* Subtraction of two adoubles    min_a_a */
+                /* (-) */
+                res  = get_locint_r();
+                arg2 = get_locint_r();
+                arg1 = get_locint_r();
+                info.r = res;
+                info.x = arg1;
+                info.y = arg2;
+                info.dx = 1.0; info.dy = -1.0;
+                break;
+           case min_d_a:           /* Subtract an adouble from a    min_d_a */
+                /* double (-) */
+                res   = get_locint_r();
+                arg   = get_locint_r();
+                coval = get_val_r();
+                info.r = res;
+                info.x = arg;
+                info.dx = -1.0;
+                break;
+            case mult_a_a:         /* Multiply two adoubles (*)    mult_a_a */
+                res  = get_locint_r();
+                arg2 = get_locint_r();
+                arg1 = get_locint_r();
+                vy = values.pop_back();
+                vx = values.pop_back();
+                info.r = res;
+                info.x = arg1;
+                info.y = arg2;
+                info.dx = vy; info.dy = vx;
+                break;
+            case eq_plus_prod:   /* increment a product of     eq_plus_prod */
+                /* two adoubles (*) */
+                res  = get_locint_r();
+                arg2 = get_locint_r();
+                arg1 = get_locint_r();
+                // (TODO)
+                break;
+            case eq_min_prod:   /* decrement a product of       eq_min_prod */
+                /* two adoubles (*) */
+                res  = get_locint_r();
+                arg2 = get_locint_r();
+                arg1 = get_locint_r();
+                // (TODO)
+                break;
+            case mult_d_a:   /* Multiply an adouble by a double    mult_d_a */
+                /* (*) */
+                res   = get_locint_r();
+                arg   = get_locint_r();
+                coval = get_val_r();
+                info.r = res;
+                info.x = arg;
+                info.dx = coval;
+                break;
+            //case mult_a_p: /* Multiply an adouble by a double    mult_a_p */
+            case div_a_a:     /* Divide an adouble by an adouble    div_a_a */
+                /* (/) */
+                res  = get_locint_r();
+                arg2 = get_locint_r();
+                arg1 = get_locint_r();
+                vy = values.pop_back();
+                vx = values.pop_back();
+                info.r = res;
+                info.x = arg1;
+                info.y = arg2;
+                info.dx = 1.0/vy;
+                info.dy = -vx/(vy*vy);
+                info.pyy = 2.0*vx/(vy*vy*vy);
+                info.pxy = -1.0/(vy*vy);
+                break;
+            case div_d_a:       /* Division double - adouble (/)    div_d_a */
+                res   = get_locint_r();
+                arg   = get_locint_r();
+                coval = get_val_r();
+                info.r = res;
+                info.x = arg;
+                vx = values.pop_back();
+                info.dx = -coval/(vx*vx);
+                info.px = 2.0*coval/(vx*vx*vx);
+                break;
+            //case div_p_a:     /* Division double - adouble (/)    div_p_a */
+            case pos_sign_a:                                  /* pos_sign_a */
+                res   = get_locint_r();
+                arg   = get_locint_r();
+                info.r = res;
+                info.x = arg;
+                info.dx = 1.0;
+                break;
+            case neg_sign_a:                                  /* neg_sign_a */
+                res   = get_locint_r();
+                arg   = get_locint_r();
+                info.r = res;
+                info.x = arg;
+                info.dx = -1.0;
+                break;
+
+            /****************************************************************/
+            /*                                             UNARY OPERATIONS */
+            /*--------------------------------------------------------------*/
+            case exp_op:                    /* exponent operation    exp_op */
+                res = get_locint_r();
+                arg = get_locint_r();
+                vx = values.pop_back();
+                info.r = res;
+                info.x = arg;
+                info.dx = exp(vx);
+                info.pxx = info.dx;
+                break;
+            case log_op:                                          /* log_op */
+                res = get_locint_r();
+                arg = get_locint_r();
+                vx = values.pop_back();
+                info.r = res;
+                info.x = arg;
+                info.dx = 1.0/vx;
+                info.px = -1.0/(vx*vx);
+                break;
+            case pow_op:                                          /* pow_op */
+                res   = get_locint_r();
+                arg   = get_locint_r();
+                coval = get_val_r();
+                vx = values.pop_back();
+                info.r = res;
+                info.x = arg;
+                if (vx == 0.0){
+                    info.dx = 0.0;
+                    info.px = 0.0;
+                }
+                else{
+                    info.dx = coval*(vr/vx);
+                    info.px = (coval-1.0)*(info.dx/vx);
+                }
+                break;
+            //case pow_op_p:                                    /* pow_op_p */ 
+            case sqrt_op:                                        /* sqrt_op */
+                res = get_locint_r();
+                arg = get_locint_r();
+                vx = values.pop_back();
+                info.r = res;
+                info.x = arg;
+                if (vx == 0.0){
+                    info.dx = 0.0;
+                    info.px = 0.0;
+                }
+                else{
+                    info.dx = 0.5*(vr/vx);
+                    info.px = -0.5*(info.dx/vx);
+                }
+                break;
+
+
+            case sin_op:                        /* sine operation    sin_op */
+                res  = get_locint_r();
+                arg2 = get_locint_r();
+                arg1 = get_locint_r();
+                vx = values.pop_back();
+                info.r = res;
+                info.x = arg1;
+                info.dx = cos(vx);
+                info.pxx = -sin(vx);
+                break;
+            case cos_op:                      /* cosine operation    cos_op */
+                res  = get_locint_r();
+                arg2 = get_locint_r();
+                arg1 = get_locint_r();
+                vx = values.pop_back();
+                info.r = res;
+                info.x = arg1;
+                info.dx = -sin(vx);
+                info.pxx = -cos(vx);
+                break;
+            case atan_op:                                       /* atan_op  */
+                res  = get_locint_r();
+                arg2 = get_locint_r();
+                arg1 = get_locint_r();
+                vx = values.pop_back();
+                info.r = res;
+                info.x = arg1;
+                info.dx = 1.0/(1.0+vx*vx);
+                info.px = -(2.0*vx)/((1.0+vx*vx)*(1.0+vx*vx));
+                break;
+            case asin_op:                                       /* asin_op  */
+                res  = get_locint_r();
+                arg2 = get_locint_r();
+                arg1 = get_locint_r();
+                vx = values.pop_back();
+                info.r = res;
+                info.x = arg1;
+                info.dx = 1.0/sqrt(1.0-vx*vx);
+                info.px = vx/((sqrt(1.0-vx*vx))*(1.0-vx*vx));
+                break;
+            case acos_op:                                       /* acos_op  */
+                res  = get_locint_r();
+                arg2 = get_locint_r();
+                arg1 = get_locint_r();
+                vx = values.pop_back();
+                info.r = res;
+                info.x = arg1;
+                info.dx = -1.0/sqrt(1.0-vx*vx);
+                info.px = -vx/((sqrt(1.0-vx*vx))*(1.0-vx*vx));
+                break;
+            case asinh_op:                                      /* asinh_op */
+                res  = get_locint_r();
+                arg2 = get_locint_r();
+                arg1 = get_locint_r();
+                vx = values.pop_back();
+                info.r = res;
+                info.x = arg1;
+                info.dx = 1.0/sqrt(1.0+vx*vx);
+                info.px = -vx*info.dx/(1.0+vx*vx);
+                break;
+            case acosh_op:                                      /* acosh_op */
+                res  = get_locint_r();
+                arg2 = get_locint_r();
+                arg1 = get_locint_r();
+                vx = values.pop_back();
+                info.r = res;
+                info.x = arg1;
+                info.dx = 1.0/sqrt(vx*vx-1.0);
+                info.px = -vx*info.dx/(vx*vx-1.0);
+                break;
+            case atanh_op:                                      /* atanh_op */
+                res  = get_locint_r();
+                arg2 = get_locint_r();
+                arg1 = get_locint_r();
+                vx = values.pop_back();
+                info.r = res;
+                info.x = arg1;
+                info.dx = 1/(1-vx*vx);
+                info.px = 2.0*vx*info.dx*info.dx;
+                break;
+            case erf_op:                                        /* erf_op   */
+                res  = get_locint_r();
+                arg2 = get_locint_r();
+                arg1 = get_locint_r();
+                vx = values.pop_back();
+                info.r = res;
+                info.x = arg1;
+                info.dx = 2.0/sqrt(acos(-1.0))*exp(-vx*vx);
+                info.px = -2.0*vx*info.dx;
+                break;
+
+            case min_op:                                          /* min_op */
+                res   = get_locint_r();
+                arg2  = get_locint_r();
+                arg1  = get_locint_r();
+                coval = get_val_r();
+                info.r = res;
+                info.dx = 1.0;
+                if (values.pop_back() < 0) {
+                   info.x = arg1; 
+                } else {
+                   info.x = arg2;
+                }
+                break;
+            case abs_val:                                        /* abs_val */
+                res   = get_locint_r();
+                arg   = get_locint_r();
+                coval = get_val_r();
+                info.r = res;
+                info.x = arg;
+                if (values.pop_back() > 0) {
+                  info.dx = 1.0;
+                } else {
+                  info.dx = -1.0;
+                }
+                break;
+            case ceil_op:                                        /* ceil_op */
+                res   = get_locint_r();
+                arg   = get_locint_r();
+                coval = get_val_r();
+                info.r = res;
+                info.x = arg;
+                info.dx = 0.0;
+                break;
+            case floor_op:                                      /* floor_op */
+                res   = get_locint_r();
+                arg   = get_locint_r();
+                coval = get_val_r();
+                info.r = res;
+                info.x = arg;
+                info.dx = 0.0;
+                break;
+            /****************************************************************/
+            /*                                                 CONDITIONALS */
+            /*--------------------------------------------------------------*/
+            case cond_assign:                                /* cond_assign */
+                res   = get_locint_r();
+                arg2  = get_locint_r();
+                arg1  = ht_r();
+                arg   = get_locint_r();
+                coval = get_val_r();
+
+
             default:
-                fprintf(DIAG_OUT, "An internal error in densehess().\n");
+                fprintf(DIAG_OUT, "Internal error in second_order_rev()"); 
+                break;
         } // end switch
         opcode = get_op_r();
     } // end while
-    end_sweep();
-
     myfree2(H);
     myfree1(adjoint);
     return 0;
