@@ -13,13 +13,23 @@
 
 static void dump_matrix(double** H, int n) {
   for (int i = 0; i < n; i++) {
-    printf("H[%d, *] = ", i);
+    //printf("H[%d, *] = ", i);
     for (int j = 0; j < n; j++) {
-      printf(" %.2f ", H[i][j]);
+      //printf(" %.2f ", H[i][j]);
+      if (H[i][j] != 0) {
+        printf("H[%d][%d] = %.2f\n", i, j, H[i][j]);
+      }
     }
-    printf("\n");
   }
 }
+static void dump_vector(double* V, int n) {
+  for (int i = 0; i < n; i++) {
+    if (V[i] != 0) {
+      printf("V[%d] = %.2f\n", i, V[i]);
+    }
+  }
+}
+
 static const locint NULL_LOC = std::numeric_limits<locint>::max();
 
 class DerivativeInfo {
@@ -632,6 +642,8 @@ int second_order_rev(short tnum,  // tape id
     init_rev_sweep(tnum);
     opcode = get_op_r();    
     while (opcode != start_of_tape) {
+        info.clear();
+        info.opcode = opcode;
         /* Switch statement to execute the operations in Reverse */
         switch (opcode) {
 
@@ -674,6 +686,9 @@ int second_order_rev(short tnum,  // tape id
                 /* adouble value. (=) */
                 res = get_locint_r();
                 arg = get_locint_r();
+                info.r = res;
+                info.x = arg;
+                info.dx = 1.0;
                 break;
             case assign_d:      /* assign an adouble variable a    assign_d */
                 /* double value. (=) */
@@ -787,7 +802,7 @@ int second_order_rev(short tnum,  // tape id
                 arg   = get_locint_r();
                 coval = get_val_r();
                 info.r = res;
-                info.x = arg1;
+                info.x = arg;
                 info.dx = 1.0;
                 break;
             case min_a_a:         /* Subtraction of two adoubles    min_a_a */
@@ -827,6 +842,7 @@ int second_order_rev(short tnum,  // tape id
                 arg2 = get_locint_r();
                 arg1 = get_locint_r();
                 // (TODO)
+                std::cout << "Encounter eq_plus_prod" << std::endl;
                 break;
             case eq_min_prod:   /* decrement a product of       eq_min_prod */
                 /* two adoubles (*) */
@@ -834,6 +850,7 @@ int second_order_rev(short tnum,  // tape id
                 arg2 = get_locint_r();
                 arg1 = get_locint_r();
                 // (TODO)
+                std::cout << "Encounter eq_min_prod" << std::endl;
                 break;
             case mult_d_a:   /* Multiply an adouble by a double    mult_d_a */
                 /* (*) */
@@ -1218,8 +1235,25 @@ int second_order_rev(short tnum,  // tape id
                 }
             }
         } // end info.r != NULL_LOC
+/*
+        info.debug();
+        dump_vector(adjoint, max_live);
+        dump_matrix(H, max_live);
+        bool nonzero = false;
+        for (int i = 0; i < max_live; i++) {
+          for (int j = 0; j < max_live; j++) {
+            if (H[i][j] != 0) {
+              nonzero = true;
+            }
+          }
+        }
+        if (nonzero) {
+           std::cout << "Non zero Hessian" << std::endl;
+        } else {
+           std::cout << "Empty Hessian" << std::endl;
+        }
+*/
         opcode = get_op_r();
-        info.clear();
     } // end while
     myfree2(H);
     myfree1(adjoint);
