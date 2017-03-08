@@ -1,3 +1,21 @@
+/*----------------------------------------------------------------------------
+ ADOL-C -- Automatic Differentiation by Overloading in C++
+ File:     hess_rev.cpp
+
+ Contents: second_order_rev (the second order reverse mode for Hessian).
+
+ This file implements the second order reverse mode described in the paper :
+    Wang, Mu, Assefaw Gebremedhin, and Alex Pothen. "Capitalizing on live
+    variables: new algorithms for efficient Hessian computation via auto-
+    matic differentiation." Mathematical Programming Computation 8.4 (20-
+    16): 393-433.
+
+ The following features of ADOL-C are not supported in this routine (for now)
+   1 : The advanced branching options
+   2 : The advector operators
+   3 : The Adjoinable MPI operations
+
+----------------------------------------------------------------------------*/
 #include <adolc/interfaces.h>
 #include <adolc/adalloc.h>
 #include "oplate.h"
@@ -11,26 +29,6 @@
 
 #include <math.h>
 
-static void dump_matrix(double** H, int n) {
-  for (int i = 0; i < n; i++) {
-    //printf("H[%d, *] = ", i);
-    for (int j = 0; j < n; j++) {
-      //printf(" %.2f ", H[i][j]);
-      if (H[i][j] != 0) {
-        printf("H[%d][%d] = %.2f\n", i, j, H[i][j]);
-      }
-    }
-  }
-}
-
-static void dump_vector(double* V, int n) {
-  for (int i = 0; i < n; i++) {
-    if (V[i] != 0) {
-      printf("V[%d] = %.2f\n", i, V[i]);
-    }
-  }
-}
-
 static const locint NULL_LOC = std::numeric_limits<locint>::max();
 
 class DerivativeInfo {
@@ -41,21 +39,11 @@ class DerivativeInfo {
 
   void clear() {
     r = NULL_LOC; x = NULL_LOC; y = NULL_LOC;
-    vx = 0.0; vy = 0.0;
     dx = 0.0; dy = 0.0;
     pxx = 0.0; pxy = 0.0; pyy = 0.0;
   }
-  void debug() const {
-    std::cout << "opcode = " << (int)opcode << " r = " << r
-              << " x = " << x << " y = " << y << std::endl;
-    std::cout << "dx = " << dx << " dy = " << dy 
-              << " pxx = " << pxx << " pxy = " << pxy
-              << " pyy = " << pyy << std::endl;
-  }
   unsigned char opcode;
   locint r, x, y;
-  mutable double coval; // only used by pow_d_a and pow_a_d
-  double vx, vy;
   double dx, dy;
   double pxx, pxy, pyy;
 };
@@ -70,11 +58,11 @@ inline static void increase_d(double** H, locint x, double w) {
 }
 
 static void branch_switch_warning(const char* opname) {
-  fprintf(DIAG_OUT, "ADOL-C Warning: Branch switch detected in comparison (%s).\n, Forward sweep aborted! Retaping recommended!", opname);
+  fprintf(DIAG_OUT, "ADOL-C Error: Branch switch detected in comparison (%s).\n, Forward sweep aborted! Retaping required!\n", opname);
 }
 
 static void unsupported_op_warning(const char* opname, unsigned char opcode) {
-  fprintf(DIAG_OUT, "ADOL-C Warning: Unsupported %s operator (%d) in second order reverse mode.\n", opname, opcode);
+  fprintf(DIAG_OUT, "ADOL-C Error: Unsupported %s operator (%d) in second order reverse mode.\n", opname, opcode);
 }
 
 // A forward mode reevaluation for the intermediate values
@@ -1498,24 +1486,8 @@ int second_order_rev(short tnum,  // tape id
 
         // The implementation of second order reverse mode
         accumulate_derivative(info, H, adjoint, r, max_live);
-/*
-        info.debug();
-        dump_vector(adjoint, max_live);
-        dump_matrix(H, max_live);
-        bool nonzero = false;
-        for (int i = 0; i < max_live; i++) {
-          for (int j = 0; j < max_live; j++) {
-            if (H[i][j] != 0) {
-              nonzero = true;
-            }
-          }
-        }
-        if (nonzero) {
-           std::cout << "Non zero Hessian" << std::endl;
-        } else {
-           std::cout << "Empty Hessian" << std::endl;
-        }
-*/
+
+        // get next operator
         opcode = get_op_r();
     } // end while
     myfree2(H);
