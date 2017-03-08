@@ -22,6 +22,7 @@ static void dump_matrix(double** H, int n) {
     }
   }
 }
+
 static void dump_vector(double* V, int n) {
   for (int i = 0; i < n; i++) {
     if (V[i] != 0) {
@@ -71,6 +72,11 @@ inline static void increase_d(double** H, locint x, double w) {
 static void branch_switch_warning(const char* opname) {
   fprintf(DIAG_OUT, "ADOL-C Warning: Branch switch detected in comparison (%s).\n, Forward sweep aborted! Retaping recommended!", opname);
 }
+
+static void unsupported_op_warning(const char* opname, unsigned char opcode) {
+  fprintf(DIAG_OUT, "ADOL-C Warning: Unsupported %s operator (%d) in second order reverse mode.\n", opname, opcode);
+}
+
 // A forward mode reevaluation for the intermediate values
 static int reevaluate(short tnum,
                 const double * const basepoint,
@@ -162,12 +168,29 @@ static int reevaluate(short tnum,
                   continue;
                 }
                 break;
-
             case assign_a:     /* assign an adouble variable an    assign_a */
                 /* adouble value. (=) */
                 arg = get_locint_f();
                 res = get_locint_f();
                 dp_T0[res]= dp_T0[arg];
+                break;
+            case neg_sign_p:
+                arg   = get_locint_f();
+                res   = get_locint_f();
+                coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg];
+                dp_T0[res] = -coval;
+                break;
+            case recipr_p:
+                arg   = get_locint_f();
+                res   = get_locint_f();
+                coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg];
+                dp_T0[res] = 1.0 / coval;
+                break;
+            case assign_p:
+                arg   = get_locint_f();
+                res   = get_locint_f();
+                coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg];
+                dp_T0[res] = coval;
                 break;
             case assign_d:      /* assign an adouble variable a    assign_d */
                 /* double value. (=) */
@@ -201,6 +224,12 @@ static int reevaluate(short tnum,
                 coval = get_val_f();
                 dp_T0[res] += coval;
                 break;
+            case eq_plus_p:
+                arg   = get_locint_f();
+                res   = get_locint_f();
+                coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg];
+                dp_T0[res] += coval;
+                break;
             case eq_plus_a:       /* Add an adouble to another    eq_plus_a */
                 /* adouble. (+=) */
                 arg  = get_locint_f();
@@ -212,12 +241,21 @@ static int reevaluate(short tnum,
                 arg1 = get_locint_f();
                 arg2 = get_locint_f();
                 res  = get_locint_f();
+                values.push_back(dp_T0[arg1]);
+                values.push_back(dp_T0[arg2]);
                 dp_T0[res] += dp_T0[arg1]*dp_T0[arg2];
                 break;
             case eq_min_d: /* Subtract a floating point from an    eq_min_d */
                 /* adouble. (-=) */
                 res   = get_locint_f();
                 coval = get_val_f();
+                dp_T0[res] -= coval;
+                break;
+            case eq_min_p:
+                /* adouble. (-=) */
+                arg = get_locint_f();
+                res = get_locint_f();
+                coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg];
                 dp_T0[res] -= coval;
                 break;
             case eq_min_a:  /* Subtract an adouble from another    eq_min_a */
@@ -231,6 +269,8 @@ static int reevaluate(short tnum,
                 arg1 = get_locint_f();
                 arg2 = get_locint_f();
                 res  = get_locint_f();
+                values.push_back(dp_T0[arg1]);
+                values.push_back(dp_T0[arg2]);
                 dp_T0[res] -= dp_T0[arg1]*dp_T0[arg2];
                 break;
             case eq_mult_d:       /* Multiply an adouble by a     eq_mult_d */
@@ -245,6 +285,13 @@ static int reevaluate(short tnum,
                 values.push_back(dp_T0[res]);
                 values.push_back(dp_T0[arg]);
                 dp_T0[res]*= dp_T0[arg];
+                break;
+            case eq_mult_p:
+                /* adouble. (*=) */
+                arg = get_locint_f();
+                res = get_locint_f();
+                coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg];
+                dp_T0[res] *= coval;
                 break;
             case incr_a:                  /* Increment an adouble    incr_a */
                 res = get_locint_f();
@@ -268,6 +315,13 @@ static int reevaluate(short tnum,
                 coval = get_val_f();
                 dp_T0[res]= dp_T0[arg] + coval;
                 break;
+            case plus_a_p:
+                arg   = get_locint_f();
+                arg1  = get_locint_f();
+                res   = get_locint_f();
+                coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg1];
+                dp_T0[res] = dp_T0[arg] + coval;
+                break;
             case min_a_a:        /* Subtraction of two adoubles     min_a_a */
                 /* (-) */
                 arg1  = get_locint_f();
@@ -281,6 +335,13 @@ static int reevaluate(short tnum,
                 res   = get_locint_f();
                 coval = get_val_f();
                 dp_T0[res]  = coval - dp_T0[arg];
+                break;
+            case min_a_p:
+                arg   = get_locint_f();
+                arg1  = get_locint_f();
+                res   = get_locint_f();
+                coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg1];
+                dp_T0[res] = dp_T0[arg] - coval;
                 break;
             case mult_a_a:         /* Multiply two adoubles (*)    mult_a_a */
                 arg1  = get_locint_f();
@@ -296,6 +357,14 @@ static int reevaluate(short tnum,
                 res   = get_locint_f();
                 coval = get_val_f();
                 dp_T0[res]  = coval * dp_T0[arg];
+                break;
+            case mult_a_p:   /* Multiply an adouble by a double    mult_a_p */
+                /* (*) */
+                arg   = get_locint_f();
+                arg1  = get_locint_f();
+                res   = get_locint_f();
+                coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg1];
+                dp_T0[res] = dp_T0[arg] * coval;
                 break;
             case div_a_a:     /* Divide an adouble by an adouble    div_a_a */
                 /* (/) */
@@ -313,7 +382,14 @@ static int reevaluate(short tnum,
                 values.push_back(dp_T0[arg]);
                 dp_T0[res]  = coval / dp_T0[arg];
                 break;
-
+            case div_p_a:       /* Division double - adouble (/)    div_p_a */
+                arg   = get_locint_f();
+                arg1  = get_locint_f();
+                res   = get_locint_f();
+                coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg1];
+                values.push_back(dp_T0[arg]);
+                dp_T0[res] = coval / dp_T0[arg];
+                break;
             case pos_sign_a:                                  /* pos_sign_a */
                 arg  = get_locint_f();
                 res  = get_locint_f();
@@ -342,8 +418,16 @@ static int reevaluate(short tnum,
                 res  = get_locint_f();
                 coval   = get_val_f();
                 values.push_back(dp_T0[arg]);
-                dp_T0[res] = pow(dp_T0[arg],coval);
+                dp_T0[res] = pow(dp_T0[arg], coval);
                 break;
+            case pow_op_p:                                      /* pow_op_p */ 
+                arg   = get_locint_f();
+                arg1  = get_locint_f();
+                res   = get_locint_f();
+                coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg1];
+                values.push_back(dp_T0[arg]);
+                dp_T0[res] = pow(dp_T0[arg], coval);
+                break; 
             case sqrt_op:                                       /* sqrt_op */
                 arg  = get_locint_f();
                 res  = get_locint_f();
@@ -579,9 +663,97 @@ static int reevaluate(short tnum,
                 arg1 = get_locint_f();
                 arg2 = get_locint_f();
                 break;
+            case gen_quad:
+                unsupported_op_warning("gen_quad", opcode);
+                ret_c = -2;
+                opcode = end_of_tape;
+                continue;
+            case neq_a_a:
+            case eq_a_a:
+            case le_a_a:
+            case ge_a_a:
+            case lt_a_a:
+            case gt_a_a:
+            case neq_a_p:
+            case eq_a_p:
+            case le_a_p:
+            case ge_a_p:
+            case lt_a_p:
+            case gt_a_p:            
+                unsupported_op_warning("ADVANCED_BRANCHING", opcode);
+                ret_c = -2;
+                opcode = end_of_tape;
+                continue;
+            case subscript:
+            case subscript_ref:
+            case ref_copyout:
+            case ref_incr_a:
+            case ref_decr_a:
+            case ref_assign_d:
+            case ref_assign_p:
+            case ref_assign_d_zero:
+            case ref_assign_d_one:
+            case ref_assign_a:
+            case ref_assign_ind:
+            case ref_eq_plus_d:
+            case ref_eq_plus_p:
+            case ref_eq_plus_a:
+            case ref_eq_min_d:
+            case ref_eq_min_p:
+            case ref_eq_min_a:
+            case ref_eq_mult_d:
+            case ref_eq_mult_p:
+            case ref_eq_mult_a:
+            case vec_copy:
+            case vec_dot:
+            case vec_axpy:
+            case ref_cond_assign:
+            case ref_cond_eq_assign:
+            case ref_cond_assign_s:
+            case ref_cond_eq_assign_s:
+                unsupported_op_warning("ADVECTOR_OPERATORS", opcode);
+                ret_c = -2;
+                opcode = end_of_tape;
+                continue;
+            case ext_diff:
+                unsupported_op_warning("ext_diff", opcode);
+                ret_c = -2;
+                opcode = end_of_tape;
+                continue;
+            case ext_diff_iArr:
+                unsupported_op_warning("ext_diff_iArr", opcode);
+                ret_c = -2;
+                opcode = end_of_tape;
+                continue;
+            case ext_diff_v2:
+                unsupported_op_warning("ext_diff_v2", opcode);
+                ret_c = -2;
+                opcode = end_of_tape;
+                continue;
+            case ampi_send:
+            case ampi_recv:
+            case ampi_isend:
+            case ampi_irecv:
+            case ampi_wait:
+            case ampi_barrier:
+            case ampi_gather:
+            case ampi_scatter:
+            case ampi_allgather:
+            case ampi_gatherv:
+            case ampi_scatterv:
+            case ampi_allgatherv:
+            case ampi_bcast:
+            case ampi_reduce:
+            case ampi_allreduce:
+                unsupported_op_warning("ADJOINTABLE_MPI", opcode);
+                ret_c = -2;
+                opcode = end_of_tape;
+                continue;
             default:
-                fprintf(DIAG_OUT, "Unsupported operator (%d) in DenseHess, please email us so an update will be released.\n", opcode);
-                break;
+                unsupported_op_warning("unknown", opcode);
+                ret_c = -2;
+                opcode = end_of_tape;
+                continue;
         }  // end switch
         opcode = get_op_f();
     } // end while
@@ -591,26 +763,96 @@ static int reevaluate(short tnum,
 }
 
 
+static void accumulate_derivative(DerivativeInfo& info,
+                                  double** H,
+                                  double* adjoint,
+                                  double* r,
+                                  int max_live) {
+    if (info.r != NULL_LOC) {
+        // Step 0: pseudo binary function
+        if (info.x != NULL_LOC && info.x == info.y) {
+            info.dx += info.dy; info.dy = 0;
+            info.pxx += info.pyy + 2.0 * info.pxy;
+            info.pyy = info.pxy = 0;
+            info.y = NULL_LOC;
+        }
+        // Step 1: retrieve w and r
+        double w = adjoint[info.r]; adjoint[info.r] = 0.0;
+        for (int i = 0; i < max_live; i++) {
+            r[i] = H[info.r][i];
+            H[info.r][i] = 0; H[i][info.r] = 0;
+        }
+        // Step 2: accumulate adjoints
+        if (info.x != NULL_LOC) {
+            adjoint[info.x] += info.dx * w;
+        }
+        if (info.y != NULL_LOC) {
+            adjoint[info.y] += info.dy * w;
+        }
+        // Step 3: accumulate Hessian
+        double pw = 0.0;
+        for (locint p = 0; p < max_live; p++) {
+            if ((pw = r[p]) != 0) {
+                if (info.y != NULL_LOC) {
+                    if (info.r != p) {
+                        if (info.x == p) {
+                            increase_d(H, p, 2*info.dx*pw);
+                        } else {
+                            increase(H, info.x, p, info.dx*pw);
+                        }
+                        if (info.y == p) {
+                            increase_d(H, p, 2*info.dy*pw);
+                        } else {
+                            increase(H, info.y, p, info.dy*pw);
+                        }
+                    } else { // info.r == p, self edge
+                        increase_d(H, info.x, info.dx*info.dx*pw);
+                        increase_d(H, info.y, info.dy*info.dy*pw);
+                        increase(H, info.x, info.y, info.dx*info.dy*pw);
+                    }
+                } else if (info.x != NULL_LOC) {
+                    if (info.r != p) {
+                        if (info.x == p) {
+                            increase_d(H, p, 2*info.dx*pw);
+                        } else {
+                            increase(H, info.x, p, info.dx*pw);
+                        }
+                    } else {
+                        increase_d(H, info.x, info.dx*info.dx*pw);
+                    }
+                }
+            } // end pw != 0.0
+        } // end for
+        if (w != 0) {
+            if (info.pxx != 0.0) {
+                increase_d(H, info.x, info.pxx * w);
+            }
+            if (info.pyy != 0.0) {
+                increase_d(H, info.y, info.pyy * w);
+            }
+            if (info.pxy != 0.0) {
+                increase(H, info.x, info.y, info.pxy * w);
+            }
+        }
+    } // end info.r != NULL_LOC
+}
 // Evaluating Dense Hessian using Second order reverse mode
 int second_order_rev(short tnum,  // tape id
                      int indep,   // # of indeps
                      double * basepoint,
                      double** Hess)  // The dense Hessian
 {
-    printf("Calling Second order rev, NULL_LOC = %u\n", NULL_LOC);
-    
     init_rev_sweep(tnum);
     if ( (1 != ADOLC_CURRENT_TAPE_INFOS.stats[NUM_DEPENDENTS]) ||
             (indep != ADOLC_CURRENT_TAPE_INFOS.stats[NUM_INDEPENDENTS]) )
         fail(ADOLC_REVERSE_COUNTS_MISMATCH);
     int indexi = ADOLC_CURRENT_TAPE_INFOS.stats[NUM_INDEPENDENTS];
-    int max_live = ADOLC_CURRENT_TAPE_INFOS.stats[NUM_MAX_LIVES];
+    int max_live = ADOLC_CURRENT_TAPE_INFOS.stats[NUM_MAX_LIVES] + 1;
     end_sweep();
-    printf("Size of max live set = %d\n", max_live);
 
     std::vector<double> values;
     int ret_c = reevaluate(tnum, basepoint, max_live, values);   
-    if (ret_c < 0) {
+    if (ret_c < 0) { // something wrong when reevaluate, do nothing
       return ret_c;
     }
 
@@ -695,12 +937,16 @@ int second_order_rev(short tnum,  // tape id
                 res   = get_locint_r();
                 coval = get_val_r();
                 break;
-/*
+
             case neg_sign_p:
             case recipr_p:
             case assign_p:
+                res   = get_locint_r();
+                arg   = get_locint_r();
+                coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg];
+                info.r = res;
                 break;
-*/
+
             case assign_d_zero: /* assign an adouble a        assign_d_zero */
             case assign_d_one:  /* double value. (=)           assign_d_one */
                 res   = get_locint_r();
@@ -714,7 +960,6 @@ int second_order_rev(short tnum,  // tape id
                 for (int i = indexi; i < indep; i++) {
                   Hess[i][indexi] = H[res][indexmap[i]];
                 }
-                // (TODO) : do something about res;
                 break;
             case assign_dep:     /* assign a float variable a    assign_dep */
                 /* dependent adouble value. (>>=) */
@@ -730,6 +975,12 @@ int second_order_rev(short tnum,  // tape id
                 res   = get_locint_r();
                 coval = get_val_r();
                 break;
+            case eq_plus_p:
+                /* adouble. (+=) */
+                res = get_locint_r();
+                arg = get_locint_r();
+                coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg];
+                break;
             case eq_plus_a:       /* Add an adouble to another    eq_plus_a */
                 /* adouble. (+=) */
                 res = get_locint_r();
@@ -744,7 +995,12 @@ int second_order_rev(short tnum,  // tape id
                 res   = get_locint_r();
                 coval = get_val_r();
                 break;
-            //case eq_min_p: /* Subtract a floating point from an  eq_min_p */
+            case eq_min_p:  /*  Subtract a floating point from an  eq_min_p */
+                /* adouble. (-=) */
+                res   = get_locint_r();
+                arg   = get_locint_r();
+                coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg];
+                break;
             case eq_min_a:  /* Subtract an adouble from another    eq_min_a */
                 /* adouble. (-=) */
                 res = get_locint_r();
@@ -762,12 +1018,15 @@ int second_order_rev(short tnum,  // tape id
                 info.x = res;
                 info.dx = coval;
                 break;
-            //case eq_mult_p:      /* Multiply an adouble by a    eq_mult_p */
+            case eq_mult_p:      /* Multiply an adouble by a    eq_mult_p */
                 /* flaoting point. (*=) */
-                //res   = get_locint_r();
-                //arg   = get_locint_r();
-                //coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg];
-                //break;
+                res   = get_locint_r();
+                arg   = get_locint_r();
+                coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg];
+                info.r = res;
+                info.x = res;
+                info.dx = coval;
+                break;
             case eq_mult_a: /* Multiply one adouble by another    eq_mult_a */
                 /* (*=) */
                 res = get_locint_r();
@@ -775,8 +1034,8 @@ int second_order_rev(short tnum,  // tape id
                 info.r = res;
                 info.x = res;
                 info.y = arg;
-                vy = *rit;rit++;
-                vx = *rit;rit++;
+                vy = *rit;++rit;
+                vx = *rit;++rit;
                 info.dx = vy; info.dy = vx;
                 info.pxy = 1.0;
                 break;
@@ -793,8 +1052,14 @@ int second_order_rev(short tnum,  // tape id
                 info.y = arg2;
                 info.dx = 1.0; info.dy = 1.0;
                 break;
-            //case plus_a_p:     /* Add an adouble and a double    plus_a_p */
-            //case min_a_p:        /* Subtract an adouble from a    min_a_p */
+            case plus_a_p:       /* Add an adouble and a double    plus_a_p */
+                res   = get_locint_r();
+                arg1  = get_locint_r();
+                arg   = get_locint_r();
+                coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg1];
+                info.r = res;
+                info.x = arg;
+                info.dx = 1.0;
                 break;
             case plus_d_a:       /* Add an adouble and a double    plus_d_a */
                 /* (+) */
@@ -815,8 +1080,16 @@ int second_order_rev(short tnum,  // tape id
                 info.y = arg2;
                 info.dx = 1.0; info.dy = -1.0;
                 break;
-           case min_d_a:           /* Subtract an adouble from a    min_d_a */
-                /* double (-) */
+            case min_a_p:           /* Subtract an adouble from a    min_a_p */
+                res   = get_locint_r();
+                arg1  = get_locint_r();
+                arg   = get_locint_r();
+                coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg1];
+                info.r = res;
+                info.x = arg;
+                info.dx = -1.0;
+                break;
+            case min_d_a:           /* Subtract an adouble from a    min_d_a */
                 res   = get_locint_r();
                 arg   = get_locint_r();
                 coval = get_val_r();
@@ -828,8 +1101,8 @@ int second_order_rev(short tnum,  // tape id
                 res  = get_locint_r();
                 arg2 = get_locint_r();
                 arg1 = get_locint_r();
-                vy = *rit;rit++;
-                vx = *rit;rit++;
+                vy = *rit;++rit;
+                vx = *rit;++rit;
                 info.r = res;
                 info.x = arg1;
                 info.y = arg2;
@@ -841,16 +1114,38 @@ int second_order_rev(short tnum,  // tape id
                 res  = get_locint_r();
                 arg2 = get_locint_r();
                 arg1 = get_locint_r();
-                // (TODO)
-                std::cout << "Encounter eq_plus_prod" << std::endl;
+                info.r = res;
+                info.x = res;
+                info.y = max_live - 1;
+                info.dx = 1.0; info.dy = 1.0;
+                accumulate_derivative(info, H, adjoint, r, max_live);
+                info.clear();
+                info.r = max_live - 1;
+                info.x = arg1;
+                info.y = arg2;
+                vy = *rit;++rit;
+                vx = *rit;++rit;
+                info.dx = vy; info.dy = vx;
+                info.pxy = 1.0;
                 break;
             case eq_min_prod:   /* decrement a product of       eq_min_prod */
                 /* two adoubles (*) */
                 res  = get_locint_r();
                 arg2 = get_locint_r();
                 arg1 = get_locint_r();
-                // (TODO)
-                std::cout << "Encounter eq_min_prod" << std::endl;
+                info.r = res;
+                info.x = res;
+                info.y = max_live - 1;
+                info.dx = 1.0; info.dy = -1.0;
+                accumulate_derivative(info, H, adjoint, r, max_live);
+                info.clear();
+                info.r = max_live - 1;
+                info.x = arg1;
+                info.y = arg2;
+                vy = *rit;++rit;
+                vx = *rit;++rit;
+                info.dx = vy; info.dy = vx;
+                info.pxy = 1.0;
                 break;
             case mult_d_a:   /* Multiply an adouble by a double    mult_d_a */
                 /* (*) */
@@ -861,14 +1156,22 @@ int second_order_rev(short tnum,  // tape id
                 info.x = arg;
                 info.dx = coval;
                 break;
-            //case mult_a_p: /* Multiply an adouble by a double    mult_a_p */
+            case mult_a_p: /* Multiply an adouble by a double    mult_a_p */
+                res   = get_locint_r();
+                arg1  = get_locint_r();
+                arg   = get_locint_r();
+                coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg1];
+                info.r = res;
+                info.x = arg;
+                info.dx = coval;
+                break;
             case div_a_a:     /* Divide an adouble by an adouble    div_a_a */
                 /* (/) */
                 res  = get_locint_r();
                 arg2 = get_locint_r();
                 arg1 = get_locint_r();
-                vy = *rit;rit++;
-                vx = *rit;rit++;
+                vy = *rit;++rit;
+                vx = *rit;++rit;
                 info.r = res;
                 info.x = arg1;
                 info.y = arg2;
@@ -883,11 +1186,21 @@ int second_order_rev(short tnum,  // tape id
                 coval = get_val_r();
                 info.r = res;
                 info.x = arg;
-                vx = *rit;rit++;
+                vx = *rit;++rit;
                 info.dx = -coval/(vx*vx);
                 info.pxx = 2.0*coval/(vx*vx*vx);
                 break;
-            //case div_p_a:     /* Division double - adouble (/)    div_p_a */
+            case div_p_a:     /* Division double - adouble (/)    div_p_a */
+                res   = get_locint_r();
+                arg1  = get_locint_r();
+                arg   = get_locint_r();
+                coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg1];
+                info.r = res;
+                info.x = arg;
+                vx = *rit;++rit;
+                info.dx = -coval/(vx*vx);
+                info.pxx = 2.0*coval/(vx*vx*vx);
+                break;
             case pos_sign_a:                                  /* pos_sign_a */
                 res   = get_locint_r();
                 arg   = get_locint_r();
@@ -909,7 +1222,7 @@ int second_order_rev(short tnum,  // tape id
             case exp_op:                    /* exponent operation    exp_op */
                 res = get_locint_r();
                 arg = get_locint_r();
-                vx = *rit;rit++;
+                vx = *rit;++rit;
                 info.r = res;
                 info.x = arg;
                 info.dx = exp(vx);
@@ -918,7 +1231,7 @@ int second_order_rev(short tnum,  // tape id
             case log_op:                                          /* log_op */
                 res = get_locint_r();
                 arg = get_locint_r();
-                vx = *rit;rit++;
+                vx = *rit;++rit;
                 info.r = res;
                 info.x = arg;
                 info.dx = 1.0/vx;
@@ -928,7 +1241,7 @@ int second_order_rev(short tnum,  // tape id
                 res   = get_locint_r();
                 arg   = get_locint_r();
                 coval = get_val_r();
-                vx = *rit;rit++;
+                vx = *rit;++rit;
                 info.r = res;
                 info.x = arg;
                 if (vx == 0.0){
@@ -940,11 +1253,27 @@ int second_order_rev(short tnum,  // tape id
                     info.pxx = (coval-1.0)*(info.dx/vx);
                 }
                 break;
-            //case pow_op_p:                                    /* pow_op_p */ 
+            case pow_op_p:                                      /* pow_op_p */
+                res   = get_locint_r();
+                arg1  = get_locint_r();
+                arg   = get_locint_r();
+                coval = ADOLC_CURRENT_TAPE_INFOS.pTapeInfos.paramstore[arg1];
+                vx = *rit;++rit;
+                info.r = res;
+                info.x = arg;
+                if (vx == 0.0){
+                    info.dx = 0.0;
+                    info.pxx = 0.0;
+                }
+                else{
+                    info.dx = coval*(pow(vx, coval)/vx);
+                    info.pxx = (coval-1.0)*(info.dx/vx);
+                }
+                break;
             case sqrt_op:                                        /* sqrt_op */
                 res = get_locint_r();
                 arg = get_locint_r();
-                vx = *rit;rit++;
+                vx = *rit;++rit;
                 info.r = res;
                 info.x = arg;
                 if (vx == 0.0){
@@ -962,7 +1291,7 @@ int second_order_rev(short tnum,  // tape id
                 res  = get_locint_r();
                 arg2 = get_locint_r();
                 arg1 = get_locint_r();
-                vx = *rit;rit++;
+                vx = *rit;++rit;
                 info.r = res;
                 info.x = arg1;
                 info.dx = cos(vx);
@@ -972,7 +1301,7 @@ int second_order_rev(short tnum,  // tape id
                 res  = get_locint_r();
                 arg2 = get_locint_r();
                 arg1 = get_locint_r();
-                vx = *rit;rit++;
+                vx = *rit;++rit;
                 info.r = res;
                 info.x = arg1;
                 info.dx = -sin(vx);
@@ -982,7 +1311,7 @@ int second_order_rev(short tnum,  // tape id
                 res  = get_locint_r();
                 arg2 = get_locint_r();
                 arg1 = get_locint_r();
-                vx = *rit;rit++;
+                vx = *rit;++rit;
                 info.r = res;
                 info.x = arg1;
                 info.dx = 1.0/(1.0+vx*vx);
@@ -992,7 +1321,7 @@ int second_order_rev(short tnum,  // tape id
                 res  = get_locint_r();
                 arg2 = get_locint_r();
                 arg1 = get_locint_r();
-                vx = *rit;rit++;
+                vx = *rit;++rit;
                 info.r = res;
                 info.x = arg1;
                 info.dx = 1.0/sqrt(1.0-vx*vx);
@@ -1002,7 +1331,7 @@ int second_order_rev(short tnum,  // tape id
                 res  = get_locint_r();
                 arg2 = get_locint_r();
                 arg1 = get_locint_r();
-                vx = *rit;rit++;
+                vx = *rit;++rit;
                 info.r = res;
                 info.x = arg1;
                 info.dx = -1.0/sqrt(1.0-vx*vx);
@@ -1012,7 +1341,7 @@ int second_order_rev(short tnum,  // tape id
                 res  = get_locint_r();
                 arg2 = get_locint_r();
                 arg1 = get_locint_r();
-                vx = *rit;rit++;
+                vx = *rit;++rit;
                 info.r = res;
                 info.x = arg1;
                 info.dx = 1.0/sqrt(1.0+vx*vx);
@@ -1022,7 +1351,7 @@ int second_order_rev(short tnum,  // tape id
                 res  = get_locint_r();
                 arg2 = get_locint_r();
                 arg1 = get_locint_r();
-                vx = *rit;rit++;
+                vx = *rit;++rit;
                 info.r = res;
                 info.x = arg1;
                 info.dx = 1.0/sqrt(vx*vx-1.0);
@@ -1032,7 +1361,7 @@ int second_order_rev(short tnum,  // tape id
                 res  = get_locint_r();
                 arg2 = get_locint_r();
                 arg1 = get_locint_r();
-                vx = *rit;rit++;
+                vx = *rit;++rit;
                 info.r = res;
                 info.x = arg1;
                 info.dx = 1/(1-vx*vx);
@@ -1042,7 +1371,7 @@ int second_order_rev(short tnum,  // tape id
                 res  = get_locint_r();
                 arg2 = get_locint_r();
                 arg1 = get_locint_r();
-                vx = *rit;rit++;
+                vx = *rit;++rit;
                 info.r = res;
                 info.x = arg1;
                 info.dx = 2.0/sqrt(acos(-1.0))*exp(-vx*vx);
@@ -1061,7 +1390,7 @@ int second_order_rev(short tnum,  // tape id
                 } else {
                    info.x = arg2;
                 }
-                rit++;
+                ++rit;
                 break;
             case abs_val:                                        /* abs_val */
                 res   = get_locint_r();
@@ -1074,7 +1403,7 @@ int second_order_rev(short tnum,  // tape id
                 } else {
                     info.dx = -1.0;
                 }
-                rit++;
+                ++rit;
                 break;
             case ceil_op:                                        /* ceil_op */
                 res   = get_locint_r();
@@ -1108,7 +1437,7 @@ int second_order_rev(short tnum,  // tape id
                 } else { // <= 0
                     info.x = arg2;
                 }
-                rit++;
+                ++rit;
                 break;
             case cond_eq_assign:                          /* cond_eq_assign */
                 res   = get_locint_r();
@@ -1123,7 +1452,7 @@ int second_order_rev(short tnum,  // tape id
                 } else { // < 0
                     info.x = arg2;
                 }
-                rit++;
+                ++rit;
                 break;
             case cond_assign_s:                            /* cond_assign_s */
                 res   = get_locint_r();
@@ -1135,7 +1464,7 @@ int second_order_rev(short tnum,  // tape id
                     info.x = arg1;
                     info.dx = 1.0;
                 }
-                rit++;
+                ++rit;
                 break;
             case cond_eq_assign_s:                      /* cond_eq_assign_s */
                 res   = get_locint_r();
@@ -1147,7 +1476,7 @@ int second_order_rev(short tnum,  // tape id
                     info.x = arg1;
                     info.dx = 1.0;
                 }
-                rit++;
+                ++rit;
                 break;
             /****************************************************************/
             /*                                              REMAINING STUFF */
@@ -1168,73 +1497,7 @@ int second_order_rev(short tnum,  // tape id
         } // end switch
 
         // The implementation of second order reverse mode
-        if (info.r != NULL_LOC) {
-            // Step 0: pseudo binary function
-            if (info.x != NULL_LOC && info.x == info.y) {
-              info.dx += info.dy; info.dy = 0;
-              info.pxx += info.pyy + 2.0 * info.pxy;
-              info.pyy = info.pxy = 0;
-              info.y = NULL_LOC;
-            }
-            // Step 1: retrieve w and r
-            w = adjoint[info.r]; adjoint[info.r] = 0.0;
-            for (int i = 0; i < max_live; i++) {
-                r[i] = H[info.r][i];
-                H[info.r][i] = 0; H[i][info.r] = 0;
-            }
-            // Step 2: accumulate adjoints
-            if (info.x != NULL_LOC) {
-                adjoint[info.x] += info.dx * w;
-            }
-            if (info.y != NULL_LOC) {
-                adjoint[info.y] += info.dy * w;
-            }
-            // Step 3: accumulate Hessian
-            double pw = 0.0;
-            for (locint p = 0; p < max_live; p++) {
-               if ((pw = r[p]) != 0) {
-                   if (info.y != NULL_LOC) {
-                       if (info.r != p) {
-                           if (info.x == p) {
-                               increase_d(H, p, 2*info.dx*pw);
-                           } else {
-                               increase(H, info.x, p, info.dx*pw);
-                           }
-                           if (info.y == p) {
-                               increase_d(H, p, 2*info.dy*pw);
-                           } else {
-                               increase(H, info.y, p, info.dy*pw);
-                           }
-                       } else { // info.r == p, self edge
-                           increase_d(H, info.x, info.dx*info.dx*pw);
-                           increase_d(H, info.y, info.dy*info.dy*pw);
-                           increase(H, info.x, info.y, info.dx*info.dy*pw);
-                       }
-                   } else if (info.x != NULL_LOC) {
-                       if (info.r != p) {
-                           if (info.x == p) {
-                               increase_d(H, p, 2*info.dx*pw);
-                           } else {
-                               increase(H, info.x, p, info.dx*pw);
-                           }
-                       } else {
-                           increase_d(H, info.x, info.dx*info.dx*pw);
-                       }
-                   }
-               } // end pw != 0.0
-            } // end for
-            if (w != 0) {
-                if (info.pxx != 0.0) {
-                    increase_d(H, info.x, info.pxx * w);
-                }
-                if (info.pyy != 0.0) {
-                    increase_d(H, info.y, info.pyy * w);
-                }
-                if (info.pxy != 0.0) {
-                    increase(H, info.x, info.y, info.pxy * w);
-                }
-            }
-        } // end info.r != NULL_LOC
+        accumulate_derivative(info, H, adjoint, r, max_live);
 /*
         info.debug();
         dump_vector(adjoint, max_live);
