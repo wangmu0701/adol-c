@@ -217,14 +217,6 @@ int hess_mat(short tag,
     return rc;
 }
 
-/*
-int densehess(short tag,
-              int n,
-              double* x,
-              double** hess) {
-  second_order_rev(tag, n, x, hess);
-}
-*/
 /*--------------------------------------------------------------------------*/
 /*                                                                  hessian */
 /* hessian(tag, n, x[n], lower triangle of H[n][n])                         */
