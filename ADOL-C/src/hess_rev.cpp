@@ -2,7 +2,15 @@
  ADOL-C -- Automatic Differentiation by Overloading in C++
  File:     hess_rev.cpp
 
- Contents: second_order_rev (the second order reverse mode for Hessian).
+ Contents: The second order reverse mode for Hessian.
+
+ Routines: 
+    // For dense Hessian evaluation 
+    int hessian_dense(short, int, double*, double**);
+
+    // For sparse Hessian evaluation
+    int hessian_sparse(short, int, double*, int*,
+                       unsigned int**, unsigned int**, double**);
 
  This file implements the second order reverse mode described in the paper :
     Wang, Mu, Assefaw Gebremedhin, and Alex Pothen. "Capitalizing on live
@@ -15,6 +23,13 @@
    2 : The advector operators
    3 : The Adjoinable MPI operations
 
+ CAUTION : Please don't reuse any active independent variables, and declare
+           all independent variables all together. This should be a general
+           rule. For example, the following coding style will cause errors.
+              xad[0] << x[0];
+              xad[1] = xad[0];
+              xad[0] << x[1];
+
 ----------------------------------------------------------------------------*/
 #include <adolc/interfaces.h>
 #include <adolc/adalloc.h>
@@ -26,6 +41,7 @@
 #include <iostream>
 #include <limits>
 #include <vector>
+#include <map>
 
 #include <math.h>
 
@@ -48,14 +64,138 @@ class DerivativeInfo {
   double pxx, pxy, pyy;
 };
 
-inline static void increase(double** H, locint x, locint y, double w) {
-  H[x][y] += w;
-  H[y][x] += w;
-}
+class AbstractHessian {
+ public:
+  AbstractHessian() = default;
+  virtual void init(locint size) = 0;
+  virtual ~AbstractHessian() = default;
+  virtual void increase(locint x, locint y, double w) = 0;
+  virtual void increase_d(locint x, double w) = 0;
+  virtual void get_row(locint v, locint*, double* r) = 0;
+ protected:
+  locint _size;
+};
 
-inline static void increase_d(double** H, locint x, double w) {
-  H[x][x] += w;
-}
+class DenseHessian : public AbstractHessian {
+ public:
+  DenseHessian() = default;
+  ~DenseHessian() {
+    myfree2(_H);
+  }
+  void init(locint size) {
+    this->_size = size; 
+    _H = myalloc2(size, size);
+    for (locint i = 0; i < _size; i++) {
+      for (locint j = 0; j < _size; j++) {
+        _H[i][j] = 0;
+      }
+    }
+  }
+  void increase(locint x, locint y, double w) {
+    _H[x][y] += w;
+    _H[y][x] += w;
+  }
+  void increase_d(locint x, double w) {
+    _H[x][x] += w;
+  } 
+  double get_val(locint x, locint y) const {
+    return _H[x][y];
+  }
+  void get_row(locint v, locint* rp, double* rw) {
+    int count = 0;
+    for (locint i = 0; i < _size; i++) {
+      if (_H[v][i] != 0) {
+        rp[count] = i;
+        rw[count] = _H[v][i];
+        count++;
+      }
+      _H[v][i] = _H[i][v] = 0;
+    }
+    rp[count] = NULL_LOC;
+  }
+ private:
+  double** _H;
+};
+
+
+class SparseHessian : public AbstractHessian {
+ public:
+  SparseHessian() = default;
+  ~SparseHessian() = default;
+  void init(locint size) {
+    this->_size = _size;
+  }
+
+  void increase(locint x, locint y, double w) {
+    _H[x][y] += w;
+    _H[y][x] += w;
+  }
+  void increase_d(locint x, double w) {
+    _H[x][x] += w;
+  }
+  void get_row(locint v, locint* rp, double* rw) {
+    int count = 0;
+    if (_H.find(v) != _H.end()) {
+      auto row = _H.find(v)->second;
+      auto iter = row.begin();
+      while (iter != row.end()) {
+        rp[count] = iter->first;
+        rw[count] = iter->second;
+        if (rp[count] != v) {
+          _H.find(rp[count])->second.erase(v);
+        }
+        ++iter;
+        count++;
+      } 
+    }
+    _H.erase(v);
+    rp[count] = NULL_LOC;
+  }
+  void get_coo_format(int indep,
+                      int* nnz, 
+                      unsigned int **rind,
+                      unsigned int **cind,
+                      double ** values,
+                      locint* indexmap,
+                      std::map<locint, locint>& inv_indexmap) {
+    int count = 0;
+    auto iter1 = _H.cbegin();
+    while (iter1 != _H.cend()) {
+      auto iter2 = iter1->second.cbegin();
+      while (iter2 != iter1->second.cend()) {
+        if (iter1->first <= iter2->first &&
+            inv_indexmap.find(iter1->first) != inv_indexmap.end() &&
+            inv_indexmap.find(iter2->first) != inv_indexmap.end()) {
+          count++;
+        }
+        ++iter2;
+      }
+      ++iter1;
+    }
+    (*nnz) = count;
+    (*rind) = (unsigned int*)malloc(sizeof(unsigned int) * count);
+    (*cind) = (unsigned int*)malloc(sizeof(unsigned int) * count);
+    (*values) = (double*)malloc(sizeof(double) * count);
+    count = 0;
+    for (locint i = 0; i < indep; i++) {
+      if (_H.find(indexmap[i]) != _H.end()) {
+        auto row = _H.find(indexmap[i])->second;
+        auto iter = row.cbegin();
+        while (iter != row.cend()) {
+          if (i >= inv_indexmap[iter->first]) {
+            (*rind)[count] = i;
+            (*cind)[count] = inv_indexmap[iter->first];
+            (*values)[count] = iter->second;
+            count++;
+          }
+          ++iter;
+        }
+      }
+    }
+  }
+ private:
+  std::map<locint, std::map<locint, double>> _H;
+};
 
 static void branch_switch_warning(const char* opname) {
   fprintf(DIAG_OUT, "ADOL-C Error: Branch switch detected in comparison (%s).\n, Forward sweep aborted! Retaping required!\n", opname);
@@ -752,10 +892,10 @@ static int reevaluate(short tnum,
 
 
 static void accumulate_derivative(DerivativeInfo& info,
-                                  double** H,
+                                  AbstractHessian* H,
                                   double* adjoint,
-                                  double* r,
-                                  int max_live) {
+                                  locint* rp,
+                                  double* rw) {
     if (info.r != NULL_LOC) {
         // Step 0: pseudo binary function
         if (info.x != NULL_LOC && info.x == info.y) {
@@ -766,10 +906,14 @@ static void accumulate_derivative(DerivativeInfo& info,
         }
         // Step 1: retrieve w and r
         double w = adjoint[info.r]; adjoint[info.r] = 0.0;
+        H->get_row(info.r, rp, rw);
+/*
+
         for (int i = 0; i < max_live; i++) {
             r[i] = H[info.r][i];
             H[info.r][i] = 0; H[i][info.r] = 0;
         }
+*/
         // Step 2: accumulate adjoints
         if (info.x != NULL_LOC) {
             adjoint[info.x] += info.dx * w;
@@ -778,57 +922,65 @@ static void accumulate_derivative(DerivativeInfo& info,
             adjoint[info.y] += info.dy * w;
         }
         // Step 3: accumulate Hessian
+        locint p;
         double pw = 0.0;
-        for (locint p = 0; p < max_live; p++) {
-            if ((pw = r[p]) != 0) {
+        int l = 0;
+        while (rp[l] != NULL_LOC) {
+            p = rp[l];
+            pw = rw[l];
+            if (pw != 0) {
                 if (info.y != NULL_LOC) {
                     if (info.r != p) {
                         if (info.x == p) {
-                            increase_d(H, p, 2*info.dx*pw);
+                            H->increase_d(p, 2*info.dx*pw);
                         } else {
-                            increase(H, info.x, p, info.dx*pw);
+                            H->increase(info.x, p, info.dx*pw);
                         }
                         if (info.y == p) {
-                            increase_d(H, p, 2*info.dy*pw);
+                            H->increase_d(p, 2*info.dy*pw);
                         } else {
-                            increase(H, info.y, p, info.dy*pw);
+                            H->increase(info.y, p, info.dy*pw);
                         }
                     } else { // info.r == p, self edge
-                        increase_d(H, info.x, info.dx*info.dx*pw);
-                        increase_d(H, info.y, info.dy*info.dy*pw);
-                        increase(H, info.x, info.y, info.dx*info.dy*pw);
+                        H->increase_d(info.x, info.dx*info.dx*pw);
+                        H->increase_d(info.y, info.dy*info.dy*pw);
+                        H->increase(info.x, info.y, info.dx*info.dy*pw);
                     }
                 } else if (info.x != NULL_LOC) {
                     if (info.r != p) {
                         if (info.x == p) {
-                            increase_d(H, p, 2*info.dx*pw);
+                            H->increase_d(p, 2*info.dx*pw);
                         } else {
-                            increase(H, info.x, p, info.dx*pw);
+                            H->increase(info.x, p, info.dx*pw);
                         }
                     } else {
-                        increase_d(H, info.x, info.dx*info.dx*pw);
+                        H->increase_d(info.x, info.dx*info.dx*pw);
                     }
                 }
             } // end pw != 0.0
+            l++;
         } // end for
         if (w != 0) {
             if (info.pxx != 0.0) {
-                increase_d(H, info.x, info.pxx * w);
+                H->increase_d(info.x, info.pxx * w);
             }
             if (info.pyy != 0.0) {
-                increase_d(H, info.y, info.pyy * w);
+                H->increase_d(info.y, info.pyy * w);
             }
             if (info.pxy != 0.0) {
-                increase(H, info.x, info.y, info.pxy * w);
+                H->increase(info.x, info.y, info.pxy * w);
             }
         }
     } // end info.r != NULL_LOC
 }
 // Evaluating Dense Hessian using Second order reverse mode
-int second_order_rev(short tnum,  // tape id
-                     int indep,   // # of indeps
-                     double * basepoint,
-                     double** Hess)  // The dense Hessian
+
+static int second_order_rev(short tnum,  // tape id
+                            int indep,   // # of indeps
+                            double * basepoint,
+                            AbstractHessian * H,
+                            locint* indexmap,
+                            std::map<locint, locint>& inv_indexmap)
 {
     init_rev_sweep(tnum);
     if ( (1 != ADOLC_CURRENT_TAPE_INFOS.stats[NUM_DEPENDENTS]) ||
@@ -844,17 +996,14 @@ int second_order_rev(short tnum,  // tape id
       return ret_c;
     }
 
-    double** H = myalloc2(max_live, max_live);
+    H->init(max_live);
     double* adjoint = myalloc1(max_live);
     double w;
-    double* r = myalloc1(max_live);
-    locint* indexmap = (locint*)malloc(sizeof(locint) * indexi);
+    locint* rp = (locint*)malloc(sizeof(locint) * max_live);
+    double* rw = myalloc1(max_live);
 
     for (int i = 0; i < max_live; i++) {
         adjoint[i] = 0;
-        for (int j = 0; j < max_live; j++) {
-            H[i][j] = 0.0;
-        }
     }
     auto rit = values.crbegin();
 
@@ -869,11 +1018,15 @@ int second_order_rev(short tnum,  // tape id
 
     DerivativeInfo info;
 
+    bool done = false;
     init_rev_sweep(tnum);
     opcode = get_op_r();    
     while (opcode != start_of_tape) {
-        info.clear();
-        info.opcode = opcode;
+      info.clear();
+      info.opcode = opcode;
+
+      // Ignore what was BEFORE the declarition of first independent variable
+      if (!done) {
         /* Switch statement to execute the operations in Reverse */
         switch (opcode) {
 
@@ -945,8 +1098,9 @@ int second_order_rev(short tnum,  // tape id
                 res = get_locint_r();
                 indexi--;
                 indexmap[indexi] = res;
-                for (int i = indexi; i < indep; i++) {
-                  Hess[i][indexi] = H[res][indexmap[i]];
+                inv_indexmap[res] = indexi;
+                if (indexi == 0) {
+                  done = true;
                 }
                 break;
             case assign_dep:     /* assign a float variable a    assign_dep */
@@ -1106,7 +1260,7 @@ int second_order_rev(short tnum,  // tape id
                 info.x = res;
                 info.y = max_live - 1;
                 info.dx = 1.0; info.dy = 1.0;
-                accumulate_derivative(info, H, adjoint, r, max_live);
+                accumulate_derivative(info, H, adjoint, rp, rw);
                 info.clear();
                 info.r = max_live - 1;
                 info.x = arg1;
@@ -1125,7 +1279,7 @@ int second_order_rev(short tnum,  // tape id
                 info.x = res;
                 info.y = max_live - 1;
                 info.dx = 1.0; info.dy = -1.0;
-                accumulate_derivative(info, H, adjoint, r, max_live);
+                accumulate_derivative(info, H, adjoint, rp, rw);
                 info.clear();
                 info.r = max_live - 1;
                 info.x = arg1;
@@ -1485,14 +1639,64 @@ int second_order_rev(short tnum,  // tape id
         } // end switch
 
         // The implementation of second order reverse mode
-        accumulate_derivative(info, H, adjoint, r, max_live);
+        accumulate_derivative(info, H, adjoint, rp, rw);
+      } // end if (!done)
 
-        // get next operator
-        opcode = get_op_r();
+      // get next operator
+      opcode = get_op_r();
     } // end while
-    myfree2(H);
     myfree1(adjoint);
-    myfree1(r);
-    free(indexmap);
+    free(rp);
+    myfree1(rw);
     return ret_c;
 }
+
+// The public interface                   
+int hessian_sparse(short tnum,  // tape id
+                   int indep,   // # of indeps
+                   double * basepoint,
+                   int* nnz,
+                   unsigned int **rind,
+                   unsigned int **cind,
+                   double **values)  // The dense Hessian
+{
+  locint* indexmap = (locint*)malloc(sizeof(locint) * indep);
+  std::map<locint, locint> inv_indexmap;
+  SparseHessian* H = new SparseHessian();
+  int ret_c = second_order_rev(tnum, indep, basepoint, H, indexmap, inv_indexmap);
+  if (ret_c < 0) {
+    return ret_c;
+  }
+  // release any reallocated memory
+  if (*rind) {free(*rind);}
+  if (*cind) {free(*cind);}
+  if (*values) {free(*values);}
+  H->get_coo_format(indep, nnz, rind, cind, values, indexmap, inv_indexmap);
+  delete H;
+  free(indexmap);
+  return ret_c;
+}
+
+int hessian_dense(short tnum,  // tape id
+                  int indep,   // # of indeps
+                  double * basepoint,
+                  double** Hess)  // The dense Hessian
+{
+
+  locint* indexmap = (locint*)malloc(sizeof(locint) * indep);
+  std::map<locint, locint> inv_indexmap;
+  DenseHessian* H = new DenseHessian();
+  int ret_c = second_order_rev(tnum, indep, basepoint, H, indexmap, inv_indexmap);
+  if (ret_c < 0) {
+    return ret_c;
+  }
+  for (int i = 0; i < indep; i++) {
+    for (int j = i; j < indep; j++) {
+      Hess[j][i] = H->get_val(indexmap[i], indexmap[j]);
+    }
+  }
+  delete H;
+  free(indexmap);
+  return ret_c;
+}
+

@@ -3,6 +3,9 @@
 
 #include <adolc/internal/common.h>
 
-ADOLC_DLL_EXPORT int second_order_rev(short, int, double*, double**);
+ADOLC_DLL_EXPORT int hessian_dense(short, int, double*, double**);
+
+ADOLC_DLL_EXPORT int hessian_sparse(short, int, double*, int*,
+                                    unsigned int**, unsigned int**, double**);
 
 #endif // ADOLC_HESS_REV_H_
