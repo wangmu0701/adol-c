@@ -1,9 +1,10 @@
-This file provides a simple routine for evaluating Hessian using second order reverse mode.
-The interface is the same as the `hessian()` in `driver/driver.c`
+This branch of adol-c provides a simple routine for evaluating Hessian using second order reverse mode.
+The interface is the same as the `hessian()` and `sparse_hess()`.
+
 ```
 hessian_dense(unsigned short tape_id, int num_independents, double* values_indep, double** Hessian)
 hessian_sparse(unsigned short tape_id, int num_independents, double* values_indep, 
-                          int* nnz_in_H, unsigned int** rind, unsigned int** cind, double** values);
+               int* nnz_in_H, unsigned int** rind, unsigned int** cind, double** values);
 ```
 
  The following features of ADOL-C are not supported in this routine (for now)
@@ -11,7 +12,9 @@ hessian_sparse(unsigned short tape_id, int num_independents, double* values_inde
    2 : The advector operators
    3 : The Adjoinable MPI operations
 
-****
+For more details, please check the sourse code 'src/hess_rev.cpp'
+
+**********************************************************************************
   
      ADOL-C
 
